@@ -57,8 +57,17 @@ send_critical_alert() {
     if [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && [ -n "${TELEGRAM_CHAT_ID:-}" ]; then
         curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
             -d chat_id="${TELEGRAM_CHAT_ID}" \
-            -d text="🚨 CRITICAL VULNERABILITY FOUND 🚨%0A%0ATarget: ${TARGET_DOMAIN}%0A${message}%0A%0ATime: $(date)" \
-            -d parse_mode="HTML" > /dev/null 2>&1 || true
+            -d text="🚨 CRITICAL: $TARGET_DOMAIN%0A$message%0ATime: $(date '+%H:%M:%S')" > /dev/null 2>&1 || true
+    fi
+}
+
+# Real-time updates
+send_telegram_update() {
+    local message="$1"
+    if [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && [ -n "${TELEGRAM_CHAT_ID:-}" ]; then
+        curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -d chat_id="${TELEGRAM_CHAT_ID}" \
+            -d text="🔍 $TARGET_DOMAIN: $message" > /dev/null 2>&1 || true
     fi
 }
 
@@ -112,21 +121,20 @@ ai_analyze_vulnerability() {
         return
     fi
     
-    local prompt="Analyze this potential vulnerability:
+    # Optimized prompt for CodeLlama 7B
+    local prompt="Security Analysis Task:
 URL: $url
-Type: $vuln_type
-Payload: $payload
-Response snippet: $(echo "$response" | head -10)
+Vulnerability Type: $vuln_type
+Test Payload: $payload
+Server Response: $(echo "$response" | head -5)
 
-Provide:
-1. Vulnerability confirmation (TRUE/FALSE)
-2. Severity (CRITICAL/HIGH/MEDIUM/LOW)
-3. Exploitation difficulty (EASY/MEDIUM/HARD)
-4. Business impact
-5. Remediation steps
-6. False positive likelihood (0-100%)
+Analysis Required:
+1. Is this a real vulnerability? (YES/NO)
+2. Risk Level: (CRITICAL/HIGH/MEDIUM/LOW)
+3. Exploitable: (EASY/HARD)
+4. False Positive Chance: (0-100%)
 
-Format as JSON."
+Respond in JSON format only."
     
     case "${AI_SERVICE}" in
         "gemini")
@@ -134,6 +142,9 @@ Format as JSON."
             ;;
         "groq")
             ai_groq_analyze "$prompt"
+            ;;
+        "ollama")
+            ai_ollama_analyze "$prompt"
             ;;
         *)
             echo "Unknown AI service: ${AI_SERVICE}"
@@ -172,6 +183,30 @@ ai_groq_analyze() {
         -H "Content-Type: application/json" \
         -d "{\"messages\":[{\"role\":\"user\",\"content\":\"$prompt\"}],\"model\":\"mixtral-8x7b-32768\"}" | \
         jq -r '.choices[0].message.content' 2>/dev/null || echo "AI analysis failed"
+}
+
+# Ollama AI analysis (CodeLlama 7B optimized)
+ai_ollama_analyze() {
+    local prompt="$1"
+    
+    if ! command -v ollama &> /dev/null; then
+        echo "Ollama not installed"
+        return
+    fi
+    
+    # Optimized for CodeLlama 7B with security context
+    curl -s -X POST http://localhost:11434/api/generate \
+        -H "Content-Type: application/json" \
+        -d "{
+            \"model\": \"${OLLAMA_MODEL:-codellama:7b}\",
+            \"prompt\": \"You are a cybersecurity expert. $prompt\",
+            \"stream\": false,
+            \"options\": {
+                \"temperature\": 0.1,
+                \"top_p\": 0.9,
+                \"max_tokens\": 500
+            }
+        }" | jq -r '.response' 2>/dev/null || echo "Ollama analysis failed"
 }
 
 # Revolutionary subdomain discovery
@@ -260,23 +295,30 @@ supreme_port_scanning() {
     local ports_dir="$WORKSPACE_DIR/ports"
     mkdir -p "$ports_dir"
     
-    # Fast initial scan
-    log_info "Fast port discovery with masscan..."
-    sudo masscan -p1-65535 --rate=1000 --wait=0 --open -iL "$WORKSPACE_DIR/subdomains/all_subdomains.txt" -oG "$ports_dir/masscan.txt" 2>/dev/null || {
-        # Fallback to nmap if masscan fails
-        log_warn "Masscan failed, using nmap..."
-        nmap -T4 -p- --open -iL "$WORKSPACE_DIR/subdomains/all_subdomains.txt" -oG "$ports_dir/nmap_all.txt" 2>/dev/null || true
-    }
+    # Skip slow port scanning, use HTTPx for service discovery
+    log_info "Using HTTPx for fast service discovery (skipping slow nmap)..."
+    httpx -l "$WORKSPACE_DIR/subdomains/all_subdomains.txt" -ports 80,443,8080,8443,8000,9000 -threads 100 -timeout 10 -silent -o "$ports_dir/live_services.txt"
     
-    # Service detection on open ports
-    log_info "Service detection and enumeration..."
-    nmap -sV -sC -A --script=default,vuln -iL "$WORKSPACE_DIR/subdomains/all_subdomains.txt" -oA "$ports_dir/service_scan" 2>/dev/null || true
+    # Advanced reconnaissance tools
+    log_info "Advanced recon with Aquatone + Subzy + S3Scanner..."
     
-    # Extract live hosts and services
-    grep "Up" "$ports_dir"/*.txt 2>/dev/null | cut -d' ' -f2 | sort -u > "$ports_dir/live_hosts.txt" || touch "$ports_dir/live_hosts.txt"
+    # Aquatone for visual recon
+    if command -v aquatone &> /dev/null; then
+        cat "$WORKSPACE_DIR/subdomains/all_subdomains.txt" | aquatone -out "$ports_dir/aquatone" -threads 20 -silent 2>/dev/null || true
+    fi
     
-    local port_count=$(grep -c "open" "$ports_dir"/*.txt 2>/dev/null || echo "0")
-    log_success "Found $port_count open services"
+    # Subdomain takeover detection
+    if command -v subzy &> /dev/null; then
+        subzy run --targets "$WORKSPACE_DIR/subdomains/all_subdomains.txt" --output "$ports_dir/takeovers.txt" 2>/dev/null || true
+    fi
+    
+    # S3 bucket scanning
+    if command -v s3scanner &> /dev/null; then
+        s3scanner scan -f "$WORKSPACE_DIR/subdomains/all_subdomains.txt" -o "$ports_dir/s3buckets.txt" 2>/dev/null || true
+    fi
+    
+    local service_count=$(wc -l < "$ports_dir/live_services.txt" 2>/dev/null || echo "0")
+    log_success "Found $service_count live services with advanced recon"
 }
 
 # Revolutionary HTTP service discovery
@@ -313,17 +355,21 @@ supreme_web_crawling() {
     log_info "Phase 4: Advanced Web Crawling & URL Discovery"
     
     local urls_dir="$WORKSPACE_DIR/urls"
-    mkdir -p "$urls_dir"
+    mkdir -p "$urls_dir" "$WORKSPACE_DIR/secrets" "$WORKSPACE_DIR/xss"
     
-    # Multiple URL discovery techniques
-    log_info "Katana advanced crawling..."
-    katana -list "$WORKSPACE_DIR/http/live_urls.txt" \
-           -depth 3 \
-           -js-crawl \
-           -known-files all \
-           -automatic-form-fill \
-           -silent \
-           -o "$urls_dir/katana.txt" 2>/dev/null || touch "$urls_dir/katana.txt"
+    # Advanced crawling with new tools
+    log_info "Katana + SecretFinder + XSStrike integration..."
+    katana -list "$WORKSPACE_DIR/http/live_urls.txt" -depth 3 -js-crawl -silent -o "$urls_dir/katana.txt"
+    
+    # JavaScript analysis with SecretFinder
+    grep '\.js$' "$urls_dir/katana.txt" | head -10 | while read js_url; do
+        secretfinder -i "$js_url" -o cli >> "$WORKSPACE_DIR/secrets/js_secrets.txt" 2>/dev/null || true
+    done
+    
+    # XSS testing with XSStrike
+    grep '?' "$urls_dir/katana.txt" | head -5 | while read param_url; do
+        xsstrike -u "$param_url" --crawl >> "$WORKSPACE_DIR/xss/xsstrike.txt" 2>/dev/null || true
+    done
     
     log_info "Historical URL discovery..."
     cat "$WORKSPACE_DIR/http/live_urls.txt" | gau --threads 10 --timeout 10 > "$urls_dir/gau.txt" 2>/dev/null || touch "$urls_dir/gau.txt"
@@ -354,19 +400,61 @@ supreme_nuclei_scanning() {
     # Update templates
     nuclei -update-templates -silent
     
-    # Comprehensive Nuclei scan with all templates
-    log_info "Running comprehensive Nuclei scan..."
+    # Comprehensive vulnerability scanning with all tools
+    log_info "Running comprehensive Nuclei + ffuf + Arjun scan..."
     nuclei -list "$WORKSPACE_DIR/http/live_urls.txt" \
            -templates ~/nuclei-templates/ \
            -severity critical,high,medium \
-           -threads 25 \
-           -timeout 10 \
-           -retries 2 \
-           -rate-limit 50 \
-           -bulk-size 25 \
-           -json \
-           -silent \
+           -threads 25 -timeout 10 -json -silent \
            -o "$nuclei_dir/nuclei_results.json" 2>/dev/null || touch "$nuclei_dir/nuclei_results.json"
+    
+    # ULTIMATE VULNERABILITY TESTING WITH ALL ADVANCED TOOLS
+    log_info "Advanced vulnerability testing with multiple tools..."
+    
+    # Directory fuzzing with ffuf
+    mkdir -p "$WORKSPACE_DIR/fuzzing"
+    head -5 "$WORKSPACE_DIR/http/live_urls.txt" | while read url; do
+        ffuf -u "$url/FUZZ" -w /usr/share/wordlists/dirb/common.txt -mc 200,301,302,403 -s -t 50 >> "$WORKSPACE_DIR/fuzzing/directories.txt" 2>/dev/null || true
+    done
+    
+    # Parameter discovery with Arjun
+    mkdir -p "$WORKSPACE_DIR/parameters"
+    head -5 "$WORKSPACE_DIR/http/live_urls.txt" | while read url; do
+        arjun -u "$url" -oJ "$WORKSPACE_DIR/parameters/$(echo $url | md5sum | cut -d' ' -f1).json" -t 20 2>/dev/null || true
+    done
+    
+    # Advanced XSS testing with XSStrike + LazyXSS
+    mkdir -p "$WORKSPACE_DIR/xss"
+    if [ -s "$WORKSPACE_DIR/urls/param_urls.txt" ]; then
+        head -10 "$WORKSPACE_DIR/urls/param_urls.txt" | while read param_url; do
+            timeout 60 xsstrike -u "$param_url" --crawl -t 10 >> "$WORKSPACE_DIR/xss/xsstrike.txt" 2>/dev/null || true
+            timeout 30 lazyxss -u "$param_url" >> "$WORKSPACE_DIR/xss/lazyxss.txt" 2>/dev/null || true
+        done
+    fi
+    
+    # SQL Injection testing with Commix
+    mkdir -p "$WORKSPACE_DIR/sqli"
+    if [ -s "$WORKSPACE_DIR/urls/param_urls.txt" ]; then
+        head -5 "$WORKSPACE_DIR/urls/param_urls.txt" | while read param_url; do
+            timeout 120 commix -u "$param_url" --batch --level=3 >> "$WORKSPACE_DIR/sqli/commix.txt" 2>/dev/null || true
+        done
+    fi
+    
+    # LFI testing with LFImap
+    mkdir -p "$WORKSPACE_DIR/lfi"
+    if [ -s "$WORKSPACE_DIR/urls/param_urls.txt" ]; then
+        head -5 "$WORKSPACE_DIR/urls/param_urls.txt" | while read param_url; do
+            timeout 60 lfimap -U "$param_url" >> "$WORKSPACE_DIR/lfi/lfimap.txt" 2>/dev/null || true
+        done
+    fi
+    
+    # Open redirect testing with OpenRedireX
+    mkdir -p "$WORKSPACE_DIR/redirects"
+    if [ -s "$WORKSPACE_DIR/urls/param_urls.txt" ]; then
+        head -10 "$WORKSPACE_DIR/urls/param_urls.txt" | while read param_url; do
+            timeout 30 openredirex -u "$param_url" >> "$WORKSPACE_DIR/redirects/openredirex.txt" 2>/dev/null || true
+        done
+    fi
     
     # Parse Nuclei results
     if [ -s "$nuclei_dir/nuclei_results.json" ]; then
@@ -590,7 +678,7 @@ EOF
     
     log_info "Starting revolutionary security assessment..."
     
-    # Execute scanning phases
+    # Execute scanning phases with ULTIMATE TOOLS
     supreme_subdomain_discovery
     supreme_port_scanning  
     supreme_http_discovery
