@@ -67,7 +67,9 @@ send_telegram_update() {
     if [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && [ -n "${TELEGRAM_CHAT_ID:-}" ]; then
         curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
             -d chat_id="${TELEGRAM_CHAT_ID}" \
-            -d text="🔍 $TARGET_DOMAIN: $message" > /dev/null 2>&1 || true
+            -d text="🔍 GODMODE: $TARGET_DOMAIN - $message" \
+            -d parse_mode="HTML" > /dev/null 2>&1 || true
+        log_info "📱 Telegram: $message"
     fi
 }
 
@@ -212,6 +214,7 @@ ai_ollama_analyze() {
 # Revolutionary subdomain discovery
 supreme_subdomain_discovery() {
     log_info "Phase 1: Revolutionary Subdomain Discovery"
+    send_telegram_update "🔍 Starting subdomain discovery"
     
     local subdomains_dir="$WORKSPACE_DIR/subdomains"
     mkdir -p "$subdomains_dir"
@@ -357,32 +360,46 @@ supreme_web_crawling() {
     local urls_dir="$WORKSPACE_DIR/urls"
     mkdir -p "$urls_dir" "$WORKSPACE_DIR/secrets" "$WORKSPACE_DIR/xss"
     
-    # Advanced crawling with new tools
-    log_info "Katana + SecretFinder + XSStrike integration..."
-    katana -list "$WORKSPACE_DIR/http/live_urls.txt" -depth 3 -js-crawl -silent -o "$urls_dir/katana.txt"
+    # Advanced crawling with timeout protection
+    log_info "Katana crawling with timeout protection..."
+    timeout 300 katana -list "$WORKSPACE_DIR/http/live_urls.txt" -depth 3 -js-crawl -silent -o "$urls_dir/katana.txt" 2>/dev/null || touch "$urls_dir/katana.txt"
     
-    # JavaScript analysis with SecretFinder
-    grep '\.js$' "$urls_dir/katana.txt" | head -10 | while read js_url; do
-        secretfinder -i "$js_url" -o cli >> "$WORKSPACE_DIR/secrets/js_secrets.txt" 2>/dev/null || true
+    # Advanced JavaScript analysis with SecretFinder
+    log_info "Analyzing JavaScript files for secrets..."
+    grep -E "\.js($|\?)" "$urls_dir/katana.txt" | head -10 | while read -r js_url; do
+        if [[ "$js_url" == *"$TARGET_DOMAIN"* ]]; then
+            timeout 30 secretfinder -i "$js_url" -o cli >> "$WORKSPACE_DIR/secrets/js_secrets.txt" 2>/dev/null || true
+        fi
     done
     
-    # XSS testing with XSStrike
-    grep '?' "$urls_dir/katana.txt" | head -5 | while read param_url; do
-        xsstrike -u "$param_url" --crawl >> "$WORKSPACE_DIR/xss/xsstrike.txt" 2>/dev/null || true
-    done
+    # TruffleHog secret scanning
+    log_info "Running TruffleHog for comprehensive secret detection..."
+    if command -v trufflehog &> /dev/null; then
+        head -10 "$WORKSPACE_DIR/http/live_urls.txt" | while read -r url; do
+            if [ -n "$url" ]; then
+                timeout 60 trufflehog http --url="$url" --json >> "$WORKSPACE_DIR/secrets/trufflehog.json" 2>/dev/null || true
+            fi
+        done
+    fi
     
-    log_info "Historical URL discovery..."
-    cat "$WORKSPACE_DIR/http/live_urls.txt" | gau --threads 10 --timeout 10 > "$urls_dir/gau.txt" 2>/dev/null || touch "$urls_dir/gau.txt"
-    cat "$WORKSPACE_DIR/http/live_urls.txt" | waybackurls > "$urls_dir/wayback.txt" 2>/dev/null || touch "$urls_dir/wayback.txt"
+    log_info "Historical URL discovery with timeouts..."
+    # GAU with strict timeout (max 2 minutes)
+    timeout 120 bash -c "cat '$WORKSPACE_DIR/http/live_urls.txt' | head -20 | gau --threads 5 --timeout 5" > "$urls_dir/gau.txt" 2>/dev/null || touch "$urls_dir/gau.txt"
     
-    # Combine and filter URLs
+    # Waybackurls with strict timeout (max 3 minutes)  
+    timeout 180 bash -c "cat '$WORKSPACE_DIR/http/live_urls.txt' | head -15 | waybackurls" > "$urls_dir/wayback.txt" 2>/dev/null || touch "$urls_dir/wayback.txt"
+    
+    log_info "Historical URL discovery completed with timeouts"
+    
+    # Combine and filter URLs properly
     cat "$urls_dir"/*.txt 2>/dev/null | \
         grep -E "^https?://" | \
         grep -v -E "\.(jpg|jpeg|png|gif|css|js|ico|svg|woff|ttf|pdf|zip|tar|gz)$" | \
         sort -u > "$urls_dir/all_urls.txt"
     
-    # Extract parameterized URLs
+    # Extract parameterized URLs and JS files
     grep "?" "$urls_dir/all_urls.txt" > "$urls_dir/param_urls.txt" 2>/dev/null || touch "$urls_dir/param_urls.txt"
+    grep -E "\.js($|\?)" "$urls_dir/all_urls.txt" > "$urls_dir/js_files.txt" 2>/dev/null || touch "$urls_dir/js_files.txt"
     
     local url_count=$(wc -l < "$urls_dir/all_urls.txt" 2>/dev/null || echo "0")
     local param_count=$(wc -l < "$urls_dir/param_urls.txt" 2>/dev/null || echo "0")
@@ -400,12 +417,11 @@ supreme_nuclei_scanning() {
     # Update templates
     nuclei -update-templates -silent
     
-    # Comprehensive vulnerability scanning with all tools
-    log_info "Running comprehensive Nuclei + ffuf + Arjun scan..."
-    nuclei -list "$WORKSPACE_DIR/http/live_urls.txt" \
-           -templates ~/nuclei-templates/ \
+    # Comprehensive vulnerability scanning with timeout protection
+    log_info "Running comprehensive Nuclei scan with timeout protection..."
+    timeout 600 nuclei -list "$WORKSPACE_DIR/http/live_urls.txt" \
            -severity critical,high,medium \
-           -threads 25 -timeout 10 -json -silent \
+           -c 25 -timeout 10 -json -silent \
            -o "$nuclei_dir/nuclei_results.json" 2>/dev/null || touch "$nuclei_dir/nuclei_results.json"
     
     # ULTIMATE VULNERABILITY TESTING WITH ALL ADVANCED TOOLS
@@ -426,9 +442,10 @@ supreme_nuclei_scanning() {
     # Advanced XSS testing with XSStrike + LazyXSS
     mkdir -p "$WORKSPACE_DIR/xss"
     if [ -s "$WORKSPACE_DIR/urls/param_urls.txt" ]; then
-        head -10 "$WORKSPACE_DIR/urls/param_urls.txt" | while read param_url; do
-            timeout 60 xsstrike -u "$param_url" --crawl -t 10 >> "$WORKSPACE_DIR/xss/xsstrike.txt" 2>/dev/null || true
-            timeout 30 lazyxss -u "$param_url" >> "$WORKSPACE_DIR/xss/lazyxss.txt" 2>/dev/null || true
+        head -5 "$WORKSPACE_DIR/urls/param_urls.txt" | while read -r param_url; do
+            if [[ "$param_url" == *"$TARGET_DOMAIN"* ]]; then
+                timeout 60 xsstrike -u "$param_url" --crawl >> "$WORKSPACE_DIR/xss/xsstrike.txt" 2>/dev/null || true
+            fi
         done
     fi
     
@@ -481,29 +498,46 @@ supreme_nuclei_scanning() {
 # Advanced vulnerability chaining analysis
 supreme_vulnerability_chaining() {
     log_info "Phase 6: Advanced Vulnerability Chaining Analysis"
+    send_telegram_update "🤖 Running AI vulnerability analysis"
     
-    local chain_dir="$WORKSPACE_DIR/chaining"
-    mkdir -p "$chain_dir"
+    local chaining_dir="$WORKSPACE_DIR/chaining"
+    mkdir -p "$chaining_dir"
     
-    # Analyze vulnerability combinations
     log_info "Analyzing vulnerability chains with AI..."
     
-    # Create vulnerability context
-    local vuln_context=""
-    if [ -s "$WORKSPACE_DIR/nuclei/nuclei_results.json" ]; then
-        vuln_context=$(jq -r '.info.name + " (" + .info.severity + ") at " + .matched_at' "$WORKSPACE_DIR/nuclei/nuclei_results.json" | head -20)
+    # Count findings
+    local subdomain_count=$(wc -l < "$WORKSPACE_DIR/subdomains/all_subdomains.txt" 2>/dev/null || echo "0")
+    local service_count=$(wc -l < "$WORKSPACE_DIR/http/live_urls.txt" 2>/dev/null || echo "0")
+    local url_count=$(wc -l < "$WORKSPACE_DIR/urls/all_urls.txt" 2>/dev/null || echo "0")
+    local param_count=$(wc -l < "$WORKSPACE_DIR/urls/param_urls.txt" 2>/dev/null || echo "0")
+    local nuclei_count=$(wc -l < "$WORKSPACE_DIR/nuclei/nuclei_results.json" 2>/dev/null || echo "0")
+    
+    # AI-powered vulnerability chaining analysis using CodeLlama
+    if command -v ollama &> /dev/null && [ "${AI_SERVICE:-}" = "ollama" ]; then
+        local ai_prompt="You are a penetration testing expert. Analyze this scan data:
+
+TARGET: $TARGET_DOMAIN
+- Subdomains: $subdomain_count
+- Live Services: $service_count  
+- URLs Found: $url_count
+- Parameterized URLs: $param_count
+- Nuclei Findings: $nuclei_count
+
+Provide a brief security assessment focusing on:
+1. Attack surface analysis
+2. Potential vulnerability chains
+3. Critical security recommendations
+4. Risk priority ranking
+
+Keep response under 200 words."
+        
+        timeout 60 bash -c "echo '$ai_prompt' | ollama run codellama:7b" > "$chaining_dir/ai_chain_analysis.txt" 2>/dev/null || echo "AI analysis timeout - CodeLlama not responding" > "$chaining_dir/ai_chain_analysis.txt"
+    else
+        echo "AI analysis not available - Ollama not configured or not running" > "$chaining_dir/ai_chain_analysis.txt"
     fi
     
-    # AI-powered chaining analysis
-    local chain_analysis=$(ai_analyze_vulnerability \
-        "$TARGET_DOMAIN" \
-        "Vulnerability Chain Analysis" \
-        "Multiple vulnerabilities detected" \
-        "$vuln_context")
-    
-    echo "$chain_analysis" > "$chain_dir/ai_chain_analysis.txt"
-    
     log_success "Vulnerability chaining analysis completed"
+    send_telegram_update "✅ AI analysis completed"
 }
 
 # Generate supreme reports
