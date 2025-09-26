@@ -2,21 +2,23 @@
 # Choose your preferred FREE AI service
 
 # Option 1: Ollama (Local, 100% Free, No internet required)
-#export AI_SERVICE="ollama"
+export AI_SERVICE="ollama"
 #export OLLAMA_MODEL="codellama:7b"
+export OLLAMA_MODEL="deepseek-coder-v2:16b"
+#export OLLAMA_MODEL="saki007ster/cybersecurityriskanalyst"
 
 # Option 2: Groq (Free 100k tokens/day)
 # export AI_SERVICE="groq"
 # export GROQ_API_KEY="your-groq-api-key"
 
 # Option 3: Google Gemini (Free tier)
-export AI_SERVICE="gemini"
-export GEMINI_API_KEY="AIzaSyB1xcHHgXlrbkmAWFGarVXMpWZNOTwdK0o"
+#export AI_SERVICE="gemini"
+#export GEMINI_API_KEY="AIzaSyB1xcHHgXlrbkmAWFGarVXMpWZNOTwdK0o"
 
 # Telegram (100% Free)
 export TELEGRAM_BOT_TOKEN="8308345795:AAEX-heAXDfzeRk3DQ4LdPA5TNwzqiWHSjE"
 export TELEGRAM_CHAT_ID="1122653663"
 
 # Performance settings
-export MAX_THREADS=30
-export SCAN_DEPTH=3
+export MAX_THREADS=40
+export SCAN_DEPTH=5
