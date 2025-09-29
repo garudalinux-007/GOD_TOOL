@@ -571,47 +571,31 @@ EOF
         WORDLIST="/usr/share/wordlists/dirb/common.txt"
     fi
     
-    # REVOLUTIONARY DIRECTORY FUZZING - SURPASSES BURP SUITE
-    head -3 "$WORKSPACE_DIR/http/live_urls.txt" | while read url; do
-        if [ -n "$url" ] && [[ "$url" =~ ^https?:// ]]; then
-            log_info "🔍 Advanced fuzzing: $url"
-            
-            # Clean URL for filename
-            url_hash=$(echo "$url" | md5sum | cut -d' ' -f1)
-            
-            # Multiple fuzzing techniques
-            log_info "Directory discovery..."
-            timeout 180 ffuf -u "$url/FUZZ" -w "$WORDLIST" \
-                -mc 200,201,202,204,301,302,307,401,403,500 \
-                -fc 404 -t 30 -s \
-                -o "$WORKSPACE_DIR/fuzzing/dirs_$url_hash.txt" 2>/dev/null || true
-            
-            log_info "File extension fuzzing..."
-            timeout 120 ffuf -u "$url/FUZZ.php" -w "$WORDLIST" \
-                -mc 200,500 -fc 404 -t 30 -s \
-                -o "$WORKSPACE_DIR/fuzzing/php_$url_hash.txt" 2>/dev/null || true
-                
-            timeout 120 ffuf -u "$url/FUZZ.asp" -w "$WORDLIST" \
-                -mc 200,500 -fc 404 -t 30 -s \
-                -o "$WORKSPACE_DIR/fuzzing/asp_$url_hash.txt" 2>/dev/null || true
-                
-            timeout 120 ffuf -u "$url/FUZZ.jsp" -w "$WORDLIST" \
-                -mc 200,500 -fc 404 -t 30 -s \
-                -o "$WORKSPACE_DIR/fuzzing/jsp_$url_hash.txt" 2>/dev/null || true
-            
-            # Backup file fuzzing
-            log_info "Backup file discovery..."
-            timeout 90 ffuf -u "$url/FUZZ.bak" -w "$WORDLIST" \
-                -mc 200 -fc 404 -t 30 -s \
-                -o "$WORKSPACE_DIR/fuzzing/backup_$url_hash.txt" 2>/dev/null || true
-                
-            # Config file fuzzing  
-            echo -e "config\nweb.config\n.env\nconfig.php\nsettings.php\nconfig.json" | \
-            timeout 60 ffuf -u "$url/FUZZ" -w - \
-                -mc 200 -fc 404 -t 20 -s \
-                -o "$WORKSPACE_DIR/fuzzing/config_$url_hash.txt" 2>/dev/null || true
+    # ULTRA-FAST DIRECTORY FUZZING (MAX 2 MINUTES TOTAL)
+    log_info "Starting ultra-fast fuzzing phase (2 minute maximum)..."
+    
+    # Kill any existing ffuf processes first
+    pkill -f ffuf 2>/dev/null || true
+    
+    # Simple and fast fuzzing with hard timeout
+    timeout 120 bash -c '
+        if [ -s "'$WORKSPACE_DIR'/http/live_urls.txt" ]; then
+            head -2 "'$WORKSPACE_DIR'/http/live_urls.txt" | while read url; do
+                if [ -n "$url" ] && [[ "$url" =~ ^https?:// ]]; then
+                    echo "[INFO] Fast fuzzing: $url"
+                    url_hash=$(echo "$url" | md5sum | cut -d'"'"' '"'"' -f1)
+                    
+                    # Quick directory check only
+                    echo -e "admin\nlogin\napi\nconfig\ntest" | timeout 30 ffuf -u "$url/FUZZ" -w - -mc 200,301,403 -fc 404 -t 5 -rate 20 -s -o "'$WORKSPACE_DIR'/fuzzing/quick_$url_hash.txt" 2>/dev/null || true
+                fi
+            done
         fi
-    done
+    ' || log_info "Fuzzing completed with timeout"
+    
+    # Ensure all ffuf processes are killed
+    pkill -f ffuf 2>/dev/null || true
+    
+    log_success "Ultra-fast fuzzing completed"
     
     # Consolidate all fuzzing results
     find "$WORKSPACE_DIR/fuzzing" -name "*.txt" -type f | while read file; do
@@ -622,21 +606,19 @@ EOF
         fi
     done
     
-    # ADVANCED PARAMETER DISCOVERY
+    # SKIP PARAMETER DISCOVERY TO PREVENT HANGING
     mkdir -p "$WORKSPACE_DIR/parameters"
-    log_info "Discovering hidden parameters..."
-    head -5 "$WORKSPACE_DIR/http/live_urls.txt" | while read url; do
-        if [ -n "$url" ]; then
-            log_info "Parameter discovery on: $url"
-            # Arjun parameter discovery with proper output
-            timeout 180 arjun -u "$url" -oJ "$WORKSPACE_DIR/parameters/params_$(echo $url | md5sum | cut -d' ' -f1).json" -t 50 --stable 2>/dev/null || true
-            
-            # Extract found parameters
-            if [ -f "$WORKSPACE_DIR/parameters/params_$(echo $url | md5sum | cut -d' ' -f1).json" ]; then
-                jq -r '.[] | "URL: \(.url) | Parameters: \(.params | join(", "))"' "$WORKSPACE_DIR/parameters/params_$(echo $url | md5sum | cut -d' ' -f1).json" >> "$WORKSPACE_DIR/parameters/all_parameters.txt" 2>/dev/null || true
-            fi
-        fi
-    done
+    log_info "Skipping parameter discovery (causes hanging - using URL parameters instead)"
+    
+    # Use existing parameter URLs from crawling
+    if [ -s "$WORKSPACE_DIR/urls/param_urls.txt" ]; then
+        head -10 "$WORKSPACE_DIR/urls/param_urls.txt" | while read param_url; do
+            echo "Found parameter URL: $param_url" >> "$WORKSPACE_DIR/parameters/all_parameters.txt"
+        done
+        log_success "Using $(wc -l < "$WORKSPACE_DIR/urls/param_urls.txt") parameter URLs from crawling"
+    else
+        echo "No parameter URLs found during crawling" > "$WORKSPACE_DIR/parameters/all_parameters.txt"
+    fi
     
     # REVOLUTIONARY XSS TESTING - SURPASSES BURP SUITE
     mkdir -p "$WORKSPACE_DIR/xss"
@@ -653,23 +635,23 @@ javascript:alert('XSS')
 <iframe src=javascript:alert('XSS')>
 EOF
     
-    # Test XSS on parameter URLs
-    if [ -s "$WORKSPACE_DIR/urls/param_urls.txt" ]; then
-        head -5 "$WORKSPACE_DIR/urls/param_urls.txt" | while read -r param_url; do
-            if [[ "$param_url" == *"$TARGET_DOMAIN"* ]] && [[ "$param_url" == *"="* ]]; then
-                log_info "XSS testing: $param_url"
-                # XSStrike with proper parameters
-                timeout 120 xsstrike -u "$param_url" --crawl --skip-dom --blind >> "$WORKSPACE_DIR/xss/xsstrike_results.txt" 2>/dev/null || true
-                
-                # Manual XSS payload testing
-                while read payload; do
-                    test_url=$(echo "$param_url" | sed "s/=[^&]*/=$(echo $payload | sed 's/[\/&]/\\&/g')/g")
-                    echo "Testing: $test_url" >> "$WORKSPACE_DIR/xss/manual_tests.txt"
-                    timeout 10 curl -s "$test_url" | grep -i "alert\|script\|onerror" >> "$WORKSPACE_DIR/xss/potential_xss.txt" 2>/dev/null || true
-                done < "$WORKSPACE_DIR/xss/payloads.txt"
-            fi
-        done
-    fi
+    # ULTRA-FAST XSS TESTING (30 SECONDS MAX)
+    log_info "Ultra-fast XSS testing (30 second max)..."
+    
+    timeout 30 bash -c '
+        if [ -s "'$WORKSPACE_DIR'/urls/param_urls.txt" ]; then
+            head -2 "'$WORKSPACE_DIR'/urls/param_urls.txt" | while read param_url; do
+                if [[ "$param_url" == *"'$TARGET_DOMAIN'"* ]] && [[ "$param_url" == *"="* ]]; then
+                    echo "[INFO] Quick XSS test: $param_url"
+                    test_url=$(echo "$param_url" | sed "s/=[^&]*/<script>alert(1)<\/script>/g")
+                    response=$(timeout 3 curl -s "$test_url" 2>/dev/null || echo "")
+                    if echo "$response" | grep -qi "script\|alert"; then
+                        echo "Potential XSS: $test_url" >> "'$WORKSPACE_DIR'/xss/potential_xss.txt"
+                    fi
+                fi
+            done
+        fi
+    ' || log_info "XSS testing completed with timeout"
     
     # ADVANCED SQL INJECTION TESTING
     mkdir -p "$WORKSPACE_DIR/sqli"
@@ -680,34 +662,28 @@ EOF
 '
 "
 ' OR '1'='1
-" OR "1"="1
 ' OR 1=1--
-" OR 1=1--
-' UNION SELECT NULL--
-" UNION SELECT NULL--
-'; DROP TABLE users--
+" OR "1"="1
+1' OR '1'='1
 EOF
+
+    # ULTRA-FAST SQL INJECTION TESTING (30 SECONDS MAX)
+    log_info "Ultra-fast SQL injection testing (30 second max)..."
     
-    if [ -s "$WORKSPACE_DIR/urls/param_urls.txt" ]; then
-        head -3 "$WORKSPACE_DIR/urls/param_urls.txt" | while read param_url; do
-            if [[ "$param_url" == *"$TARGET_DOMAIN"* ]] && [[ "$param_url" == *"="* ]]; then
-                log_info "SQLi testing: $param_url"
-                # Commix with proper output
-                timeout 180 commix -u "$param_url" --batch --level=2 --technique=B --output-dir="$WORKSPACE_DIR/sqli/" >> "$WORKSPACE_DIR/sqli/commix_results.txt" 2>/dev/null || true
-                
-                # Manual SQL injection testing
-                while read payload; do
-                    test_url=$(echo "$param_url" | sed "s/=[^&]*/=$(echo $payload | sed 's/[\/&]/\\&/g')/g")
-                    response=$(timeout 10 curl -s "$test_url" 2>/dev/null || echo "")
-                    if echo "$response" | grep -qi "sql\|mysql\|error\|warning\|fatal"; then
-                        echo "Potential SQLi: $test_url" >> "$WORKSPACE_DIR/sqli/potential_sqli.txt"
-                        echo "Response: $response" >> "$WORKSPACE_DIR/sqli/potential_sqli.txt"
-                        echo "---" >> "$WORKSPACE_DIR/sqli/potential_sqli.txt"
+    timeout 30 bash -c '
+        if [ -s "'$WORKSPACE_DIR'/urls/param_urls.txt" ]; then
+            head -2 "'$WORKSPACE_DIR'/urls/param_urls.txt" | while read param_url; do
+                if [[ "$param_url" == *"'$TARGET_DOMAIN'"* ]] && [[ "$param_url" == *"="* ]]; then
+                    echo "[INFO] Quick SQLi test: $param_url"
+                    test_url=$(echo "$param_url" | sed "s/=[^&]*/'"'"'/g")
+                    response=$(timeout 3 curl -s "$test_url" 2>/dev/null || echo "")
+                    if echo "$response" | grep -qi "sql\|mysql\|error\|syntax"; then
+                        echo "Potential SQLi: $test_url" >> "'$WORKSPACE_DIR'/sqli/potential_sqli.txt"
                     fi
-                done < "$WORKSPACE_DIR/sqli/payloads.txt"
-            fi
-        done
-    fi
+                fi
+            done
+        fi
+    ' || log_info "SQLi testing completed with timeout"
     
     # ADVANCED LFI TESTING
     mkdir -p "$WORKSPACE_DIR/lfi"
@@ -725,23 +701,23 @@ EOF
 ..\\..\\..\\boot.ini
 EOF
     
-    if [ -s "$WORKSPACE_DIR/urls/param_urls.txt" ]; then
-        head -3 "$WORKSPACE_DIR/urls/param_urls.txt" | while read param_url; do
-            if [[ "$param_url" == *"$TARGET_DOMAIN"* ]] && [[ "$param_url" == *"="* ]]; then
-                log_info "LFI testing: $param_url"
-                # Manual LFI testing
-                while read payload; do
-                    test_url=$(echo "$param_url" | sed "s/=[^&]*/=$(echo $payload | sed 's/[\/&]/\\&/g')/g")
-                    response=$(timeout 10 curl -s "$test_url" 2>/dev/null || echo "")
-                    if echo "$response" | grep -qi "root:\|administrator\|windows\|linux"; then
-                        echo "Potential LFI: $test_url" >> "$WORKSPACE_DIR/lfi/potential_lfi.txt"
-                        echo "Response snippet: $(echo "$response" | head -5)" >> "$WORKSPACE_DIR/lfi/potential_lfi.txt"
-                        echo "---" >> "$WORKSPACE_DIR/lfi/potential_lfi.txt"
+    # ULTRA-FAST LFI TESTING (20 SECONDS MAX)
+    log_info "Ultra-fast LFI testing (20 second max)..."
+    
+    timeout 20 bash -c '
+        if [ -s "'$WORKSPACE_DIR'/urls/param_urls.txt" ]; then
+            head -2 "'$WORKSPACE_DIR'/urls/param_urls.txt" | while read param_url; do
+                if [[ "$param_url" == *"'$TARGET_DOMAIN'"* ]] && [[ "$param_url" == *"="* ]]; then
+                    echo "[INFO] Quick LFI test: $param_url"
+                    test_url=$(echo "$param_url" | sed "s/=[^&]*/=..\/..\/..\/etc\/passwd/g")
+                    response=$(timeout 3 curl -s "$test_url" 2>/dev/null || echo "")
+                    if echo "$response" | grep -qi "root:\|administrator"; then
+                        echo "Potential LFI: $test_url" >> "'$WORKSPACE_DIR'/lfi/potential_lfi.txt"
                     fi
-                done < "$WORKSPACE_DIR/lfi/payloads.txt"
-            fi
-        done
-    fi
+                fi
+            done
+        fi
+    ' || log_info "LFI testing completed with timeout"
     
     # ADVANCED OPEN REDIRECT TESTING
     mkdir -p "$WORKSPACE_DIR/redirects"
@@ -760,35 +736,71 @@ http:evil.com
 https://google.com
 EOF
     
-    if [ -s "$WORKSPACE_DIR/urls/param_urls.txt" ]; then
-        head -5 "$WORKSPACE_DIR/urls/param_urls.txt" | while read param_url; do
-            if [[ "$param_url" == *"$TARGET_DOMAIN"* ]] && [[ "$param_url" == *"="* ]]; then
-                log_info "Open Redirect testing: $param_url"
-                # Manual redirect testing
-                while read payload; do
-                    test_url=$(echo "$param_url" | sed "s/=[^&]*/=$(echo $payload | sed 's/[\/&]/\\&/g')/g")
-                    response=$(timeout 10 curl -s -I "$test_url" 2>/dev/null || echo "")
-                    if echo "$response" | grep -qi "location.*evil\|location.*google"; then
-                        echo "Potential Open Redirect: $test_url" >> "$WORKSPACE_DIR/redirects/potential_redirects.txt"
-                        echo "Response: $response" >> "$WORKSPACE_DIR/redirects/potential_redirects.txt"
-                        echo "---" >> "$WORKSPACE_DIR/redirects/potential_redirects.txt"
+    # ULTRA-FAST OPEN REDIRECT TESTING (15 SECONDS MAX)
+    log_info "Ultra-fast Open Redirect testing (15 second max)..."
+    
+    timeout 15 bash -c '
+        if [ -s "'$WORKSPACE_DIR'/urls/param_urls.txt" ]; then
+            head -1 "'$WORKSPACE_DIR'/urls/param_urls.txt" | while read param_url; do
+                if [[ "$param_url" == *"'$TARGET_DOMAIN'"* ]] && [[ "$param_url" == *"="* ]]; then
+                    echo "[INFO] Quick redirect test: $param_url"
+                    test_url=$(echo "$param_url" | sed "s/=[^&]*/=http:\/\/evil.com/g")
+                    response=$(timeout 3 curl -s -I "$test_url" 2>/dev/null || echo "")
+                    if echo "$response" | grep -qi "location.*evil"; then
+                        echo "Potential Open Redirect: $test_url" >> "'$WORKSPACE_DIR'/redirects/potential_redirects.txt"
                     fi
-                done < "$WORKSPACE_DIR/redirects/payloads.txt"
-            fi
-        done
-    fi
+                fi
+            done
+        fi
+    ' || log_info "Open Redirect testing completed with timeout"
     
     # COMPREHENSIVE VULNERABILITY SUMMARY
     log_info "Generating comprehensive vulnerability summary..."
     mkdir -p "$WORKSPACE_DIR/summary"
     
-    # Count all findings
-    local fuzzing_results=$(wc -l < "$WORKSPACE_DIR/fuzzing/directories_found.txt" 2>/dev/null || echo "0")
-    local param_results=$(wc -l < "$WORKSPACE_DIR/parameters/all_parameters.txt" 2>/dev/null || echo "0")
-    local xss_results=$(wc -l < "$WORKSPACE_DIR/xss/potential_xss.txt" 2>/dev/null || echo "0")
-    local sqli_results=$(wc -l < "$WORKSPACE_DIR/sqli/potential_sqli.txt" 2>/dev/null || echo "0")
-    local lfi_results=$(wc -l < "$WORKSPACE_DIR/lfi/potential_lfi.txt" 2>/dev/null || echo "0")
-    local redirect_results=$(wc -l < "$WORKSPACE_DIR/redirects/potential_redirects.txt" 2>/dev/null || echo "0")
+    # Count all findings (with proper file checks)
+    local fuzzing_results=0
+    local param_results=0
+    local xss_results=0
+    local sqli_results=0
+    local lfi_results=0
+    local redirect_results=0
+    
+    # Count fuzzing results
+    if [ -f "$WORKSPACE_DIR/fuzzing/all_findings.txt" ]; then
+        fuzzing_results=$(wc -l < "$WORKSPACE_DIR/fuzzing/all_findings.txt" 2>/dev/null || echo "0")
+    fi
+    
+    # Count parameter results
+    if [ -f "$WORKSPACE_DIR/parameters/all_parameters.txt" ]; then
+        param_results=$(wc -l < "$WORKSPACE_DIR/parameters/all_parameters.txt" 2>/dev/null || echo "0")
+    fi
+    
+    # Count vulnerability results
+    if [ -f "$WORKSPACE_DIR/xss/potential_xss.txt" ]; then
+        xss_results=$(wc -l < "$WORKSPACE_DIR/xss/potential_xss.txt" 2>/dev/null || echo "0")
+    fi
+    
+    if [ -f "$WORKSPACE_DIR/sqli/potential_sqli.txt" ]; then
+        sqli_results=$(wc -l < "$WORKSPACE_DIR/sqli/potential_sqli.txt" 2>/dev/null || echo "0")
+    fi
+    
+    if [ -f "$WORKSPACE_DIR/lfi/potential_lfi.txt" ]; then
+        lfi_results=$(wc -l < "$WORKSPACE_DIR/lfi/potential_lfi.txt" 2>/dev/null || echo "0")
+    fi
+    
+    if [ -f "$WORKSPACE_DIR/redirects/potential_redirects.txt" ]; then
+        redirect_results=$(wc -l < "$WORKSPACE_DIR/redirects/potential_redirects.txt" 2>/dev/null || echo "0")
+    fi
+    
+    # Count Nuclei vulnerabilities
+    local nuclei_vulns=0
+    if [ -f "$WORKSPACE_DIR/nuclei/nuclei_results.jsonl" ]; then
+        nuclei_vulns=$(wc -l < "$WORKSPACE_DIR/nuclei/nuclei_results.jsonl" 2>/dev/null || echo "0")
+    fi
+    
+    # Calculate total vulnerabilities
+    local TOTAL_VULNS=$((xss_results + sqli_results + lfi_results + redirect_results + nuclei_vulns))
     
     # Create comprehensive summary
     cat > "$WORKSPACE_DIR/summary/comprehensive_findings.txt" << EOF
@@ -797,8 +809,8 @@ EOF
 ╚══════════════════════════════════════════════════════════════════════════════╝
 
 🎯 TARGET: $TARGET_DOMAIN
-📅 SCAN DATE: $(date)
-⏱️  DURATION: $(printf '%02d:%02d:%02d' $(($(date +%s - SCAN_START_TIME)/3600)) $((($(date +%s) - SCAN_START_TIME)%3600/60)) $((($(date +%s) - SCAN_START_TIME)%60)))
+📅 SCAN DATE: $(date '+%Y-%m-%d %H:%M:%S')
+⏱️  DURATION: $(($(date +%s) - SCAN_START_TIME)) seconds
 
 📊 COMPREHENSIVE FINDINGS SUMMARY:
 • 🔍 Directory/File Discovery: $fuzzing_results findings
